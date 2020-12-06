@@ -23,6 +23,7 @@ bin-release/
 .FlexUnitSettings
 .externalToolBuilders
 .model
+migrations/
 
 
 ### Flask ###
