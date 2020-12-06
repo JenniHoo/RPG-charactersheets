@@ -3,41 +3,39 @@ from flask_restful import Resource
 from flask_jwt_extended import jwt_optional, get_jwt_identity, jwt_required
 from http import HTTPStatus
 
-from utils import hash_password
+from webargs import fields
+from webargs.flaskparser import use_kwargs
+
+from models.sheet import Sheet
 from models.user import User
+
+from schemas.sheet import SheetSchema
+from schemas.user import UserSchema
+
+user_schema = UserSchema()
+user_public_schema = UserSchema(exclude=('email', ))
+sheet_list_schema = SheetSchema(many=True)
 
 
 class UserListResource(Resource):
     def post(self):
         json_data = request.get_json()
 
-        username = json_data.get('username')
-        email = json_data.get('email')
-        non_hash_password = json_data.get('password')
+        data, errors = user_schema.load(data=json_data)
 
-        if User.get_by_username(username):
+        if errors:
+            return {'message': 'Validation errors', 'errors': errors}, HTTPStatus.BAD_REQUEST
+
+        if User.get_by_username(data.get('username')):
             return {'message': 'username already used'}, HTTPStatus.BAD_REQUEST
 
-        if User.get_by_email(email):
+        if User.get_by_email(data.get('email')):
             return {'message': 'email already used'}, HTTPStatus.BAD_REQUEST
 
-        password = hash_password(non_hash_password)
-
-        user = User(
-            username=username,
-            email=email,
-            password=password
-        )
-
+        user = User(**data)
         user.save()
 
-        data = {
-            'id': user.id,
-            'username': user.username,
-            'email':user.email
-        }
-
-        return data, HTTPStatus.CREATED
+        return user_schema.dump(user).data, HTTPStatus.CREATED
 
 
 class UserResource(Resource):
@@ -47,21 +45,14 @@ class UserResource(Resource):
         user = User.get_by_username(username=username)
 
         if user is None:
-            return {'message': 'user not found'}, HTTPStatus.NOT_FOUND
+            return {'message': 'User not found'}, HTTPStatus.NOT_FOUND
 
         current_user = get_jwt_identity()
 
         if current_user == user.id:
-            data = {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-            }
+            data = user_schema.dump(user).data
         else:
-            data = {
-                'id': user.id,
-                'username': user.username,
-            }
+            data = user_public_schema.dump(user).data
 
         return data, HTTPStatus.OK
 
@@ -73,10 +64,27 @@ class MeResource(Resource):
 
         user = User.get_by_id(id=get_jwt_identity())
 
-        data = {
-            'id': user.id,
-            'username': user.username,
-            'email': user.email,
-        }
+        return user_schema.dump(user).data, HTTPStatus.OK
 
-        return data, HTTPStatus.OK
+
+class UserSheetListResource(Resource):
+
+    @jwt_optional
+    @use_kwargs({'visibility': fields.Str(missing='public')})
+    def get(self, username, visibility):
+
+        user = User.get_by_username(username=username)
+
+        if user is None:
+            return {'message': 'user not found'}, HTTPStatus.NOT_FOUND
+
+        current_user = get_jwt_identity()
+
+        if current_user == user.id and visibility in ['all', 'private']:
+            pass
+        else:
+            visibility = 'public'
+
+        sheets = Sheet.get_all_by_user(user_id=user.id, visibility=visibility)
+
+        return sheet_list_schema.dump(sheets).data, HTTPStatus.OK
