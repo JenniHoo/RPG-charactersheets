@@ -4,6 +4,10 @@ from flask_jwt_extended import get_jwt_identity, jwt_required, jwt_optional
 from http import HTTPStatus
 
 from models.sheet import Sheet
+from schemas.sheet import SheetSchema
+
+sheet_schema = SheetSchema()
+sheet_list_schema = SheetSchema(many=True)
 
 
 class SheetListResource(Resource):
@@ -12,27 +16,25 @@ class SheetListResource(Resource):
 
         sheets = Sheet.get_all_published()
 
-        data = []
-
-        for sheet in sheets:
-            data.append(sheet.data())
-
-        return {'data': data}, HTTPStatus.OK
+        return sheet_list_schema.dump(sheets).data, HTTPStatus.OK
 
     @jwt_required
     def post(self):
 
         json_data = request.get_json()
-        current_user = get_jwt_identity()
-        sheet = Sheet(name=json_data['name'],
-                      race=json_data['race'],
-                      hp=int(json_data['hp']),
-                      statistics=json_data['statistics'],
-                      user_id=current_user)
 
+        current_user = get_jwt_identity()
+
+        data, errors = sheet_schema.load(data=json_data)
+
+        if errors:
+            return {'message': "Validation errors", 'errors': errors}, HTTPStatus.BAD_REQUEST
+
+        sheet = Sheet(**data)
+        sheet.user_id = current_user
         sheet.save()
 
-        return sheet.data(), HTTPStatus.CREATED
+        return sheet_schema.dump(sheet).data, HTTPStatus.CREATED
 
 
 class SheetResource(Resource):
@@ -53,9 +55,14 @@ class SheetResource(Resource):
         return sheet.data(), HTTPStatus.OK
 
     @jwt_required
-    def put(self, sheet_id):
+    def patch(self, sheet_id):
 
         json_data = request.get_json()
+
+        data, errors = sheet_schema.load(data=json_data, partial=('name', ))
+
+        if errors:
+            return {'message': 'Validation errors', 'errors': errors}, HTTPStatus.BAD_REQUEST
 
         sheet = Sheet.get_by_id(sheet_id=sheet_id)
 
@@ -67,14 +74,14 @@ class SheetResource(Resource):
         if current_user != sheet.user_id:
             return {'message': 'access is not allowed'}, HTTPStatus.FORBIDDEN
 
-        sheet.name = json_data['name']
-        sheet.race = json_data['race']
-        sheet.hp = int(json_data['hp'])
-        sheet.statistics = json_data['statistics']
+        sheet.name = data.get('name') or sheet.name
+        sheet.race = data.get('race') or sheet.race
+        sheet.hp = data.get('hp') or sheet.hp
+        sheet.statistics = data.get('statistics') or sheet.statistics
 
         sheet.save()
 
-        return sheet.data(), HTTPStatus.OK
+        return sheet_schema.dump(sheet).data, HTTPStatus.OK
 
     @jwt_required
     def delete(self, sheet_id):
